@@ -89,6 +89,40 @@ export const runAnalysis = createServerFn({ method: "POST" })
       console.warn("Upstox enrich failed", e);
     }
 
+    // News & economic context (already-scored, last 24h, this index)
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const { data: newsRows } = await context.supabase
+      .from("news")
+      .select("title,raw,sentiment(sentiment_score,impact_score,rationale)")
+      .eq("user_id", context.userId)
+      .gte("published_at", since)
+      .order("published_at", { ascending: false })
+      .limit(40);
+    const indexNews = (newsRows ?? []).filter(
+      (r) => (r.raw as { market_index?: string } | null)?.market_index === data.market_index,
+    );
+    const topNews = indexNews
+      .map((r) => ({ ...r, s: Array.isArray(r.sentiment) ? r.sentiment[0] : r.sentiment }))
+      .filter((r) => r.s)
+      .sort((a, b) => (b.s?.impact_score ?? 0) - (a.s?.impact_score ?? 0))
+      .slice(0, 8);
+    const newsCtx = topNews.length
+      ? `\n\nTOP SCORED HEADLINES (last 24h, ${data.market_index}):\n` +
+        topNews.map((r) => `- [sent ${r.s?.sentiment_score?.toFixed(2)} impact ${Math.round(r.s?.impact_score ?? 0)}] ${r.title}`).join("\n")
+      : "";
+
+    const { data: econRows } = await context.supabase
+      .from("economic_events")
+      .select("event_name,event_date,importance,category")
+      .eq("user_id", context.userId)
+      .gte("event_date", new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10))
+      .order("event_date", { ascending: true })
+      .limit(10);
+    const econCtx = econRows?.length
+      ? `\n\nUPCOMING ECONOMIC EVENTS:\n` +
+        econRows.map((e) => `- ${e.event_date?.slice(0, 10)} [${e.importance ?? "low"}] ${e.event_name} (${e.category ?? ""})`).join("\n")
+      : "";
+
     const userPrompt = `Analyze this scenario for the Indian market.
 
 Index: ${data.market_index}
@@ -97,7 +131,7 @@ Risk profile: ${data.risk}
 Time horizon: ${data.horizon}
 Capital: ₹${data.capital.toLocaleString("en-IN")}
 ${data.notes ? `User notes: ${data.notes}` : ""}
-${liveCtx || "\n(No live market data — user has not connected Upstox; produce a structural view and return null for entry/SL/targets.)"}
+${liveCtx || "\n(No live market data — user has not connected Upstox; produce a structural view and return null for entry/SL/targets.)"}${newsCtx}${econCtx}
 
 Decide how to dynamically WEIGHT the five factor buckets (technical, options, news, economic, candlestick) based on what currently matters most for this scenario, then produce the structured analysis.${liveSpot ? ` Use the live spot of ${liveSpot.toFixed(2)} as anchor for entry/SL/targets.` : ""}`;
 
