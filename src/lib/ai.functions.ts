@@ -57,6 +57,38 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
     const gateway = createLovableAiGatewayProvider(key);
 
+    // Pull live market context from Upstox if connected
+    let liveCtx = "";
+    let liveSpot: number | null = null;
+    try {
+      const { data: integ } = await context.supabase
+        .from("integrations")
+        .select("credentials")
+        .eq("user_id", context.userId)
+        .eq("provider", "upstox")
+        .maybeSingle();
+      const token = (integ?.credentials as { access_token?: string } | null)?.access_token;
+      if (token) {
+        const { fetchQuote, fetchExpiries, fetchOptionChain } = await import("./upstox.server");
+        const q = await fetchQuote(token, data.market_index).catch(() => null);
+        if (q) {
+          liveSpot = q.ltp;
+          liveCtx = `\nLIVE MARKET DATA (Upstox, ${q.ts}):\n- Spot: ${q.ltp.toFixed(2)} (O ${q.open} H ${q.high} L ${q.low} prev close ${q.close})\n- Change: ${q.change.toFixed(2)} (${q.changePct.toFixed(2)}%)`;
+        }
+        if (["NIFTY50", "BANKNIFTY", "FINNIFTY", "SENSEX"].includes(data.market_index)) {
+          const exps = await fetchExpiries(token, data.market_index).catch(() => [] as string[]);
+          if (exps[0]) {
+            const chain = await fetchOptionChain(token, data.market_index, exps[0]).catch(() => null);
+            if (chain) {
+              liveCtx += `\n- Nearest expiry: ${chain.expiry} | PCR: ${chain.pcr.toFixed(2)} | Max Pain: ${chain.max_pain} | Call OI: ${chain.total_call_oi} | Put OI: ${chain.total_put_oi}`;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Upstox enrich failed", e);
+    }
+
     const userPrompt = `Analyze this scenario for the Indian market.
 
 Index: ${data.market_index}
@@ -65,8 +97,9 @@ Risk profile: ${data.risk}
 Time horizon: ${data.horizon}
 Capital: ₹${data.capital.toLocaleString("en-IN")}
 ${data.notes ? `User notes: ${data.notes}` : ""}
+${liveCtx || "\n(No live market data — user has not connected Upstox; produce a structural view and return null for entry/SL/targets.)"}
 
-Decide how to dynamically WEIGHT the five factor buckets (technical, options, news, economic, candlestick) based on what currently matters most for this scenario, then produce the structured analysis.`;
+Decide how to dynamically WEIGHT the five factor buckets (technical, options, news, economic, candlestick) based on what currently matters most for this scenario, then produce the structured analysis.${liveSpot ? ` Use the live spot of ${liveSpot.toFixed(2)} as anchor for entry/SL/targets.` : ""}`;
 
     let result;
     try {
