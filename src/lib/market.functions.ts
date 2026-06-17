@@ -72,7 +72,7 @@ export const pullOptionChain = createServerFn({ method: "POST" })
       spot: chain.spot,
       pcr: chain.pcr,
       max_pain: chain.max_pain,
-      rows: chain.rows as unknown as object,
+      rows: chain.rows as never,
     });
 
     return chain;
