@@ -3,9 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { listIntegrations } from "@/lib/integrations.functions";
+import { getLiveQuotes } from "@/lib/market.functions";
 import { PageHeader, EmptyState, StatusPill } from "@/components/AppShell";
 import { Activity, Brain, Plug, TrendingUp } from "lucide-react";
-import { indexLabel } from "@/lib/market";
+import { indexLabel, INDICES } from "@/lib/market";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — AI Algo" }] }),
@@ -14,9 +15,17 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 function Dashboard() {
   const list = useServerFn(listIntegrations);
+  const quotesFn = useServerFn(getLiveQuotes);
   const integrations = useQuery({
     queryKey: ["integrations"],
     queryFn: () => list({ data: undefined as never }),
+  });
+  const connected = !!integrations.data?.find((i) => i.provider === "upstox" && i.status === "connected");
+  const quotes = useQuery({
+    queryKey: ["live-quotes"],
+    queryFn: () => quotesFn({ data: { indices: INDICES.map((i) => i.value) as never } }),
+    enabled: connected,
+    refetchInterval: 15000,
   });
 
   const recent = useQuery({
@@ -65,6 +74,26 @@ function Dashboard() {
         <StatCard label="Signals" value={stats.data?.signals ?? 0} icon={TrendingUp} />
         <StatCard label="Forecasts" value={stats.data?.forecasts ?? 0} icon={Activity} />
       </div>
+
+      {connected && quotes.data?.connected && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
+          {quotes.data.quotes.map((q) => (
+            <div key={q.symbol} className="glass rounded-xl p-3">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{indexLabel(q.symbol)}</div>
+              {q.ok ? (
+                <>
+                  <div className="text-base font-mono mt-1">{q.ltp.toFixed(2)}</div>
+                  <div className={`text-xs font-mono ${q.change >= 0 ? "text-bullish" : "text-bearish"}`}>
+                    {q.change >= 0 ? "+" : ""}{q.change.toFixed(2)} ({q.changePct.toFixed(2)}%)
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs text-muted-foreground mt-1">{q.error}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {integrations.data && integrations.data.every((i) => i.status !== "connected") && (
         <div className="glass rounded-xl p-4 mb-6 flex items-center justify-between gap-4">
