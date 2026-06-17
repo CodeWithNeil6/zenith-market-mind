@@ -1,12 +1,17 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { listIntegrations } from "@/lib/integrations.functions";
 import { getLiveQuotes } from "@/lib/market.functions";
+import { listNews, refreshNews, getNewsSummary, listEconomicEvents } from "@/lib/news.functions";
 import { PageHeader, EmptyState, StatusPill } from "@/components/AppShell";
-import { Activity, Brain, Plug, TrendingUp } from "lucide-react";
+import { Activity, Brain, Plug, TrendingUp, Newspaper, Globe2, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { indexLabel, INDICES } from "@/lib/market";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — AI Algo" }] }),
@@ -14,8 +19,16 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 });
 
 function Dashboard() {
+  const qc = useQueryClient();
   const list = useServerFn(listIntegrations);
   const quotesFn = useServerFn(getLiveQuotes);
+  const newsFn = useServerFn(listNews);
+  const newsSummaryFn = useServerFn(getNewsSummary);
+  const refreshNewsFn = useServerFn(refreshNews);
+  const econFn = useServerFn(listEconomicEvents);
+
+  const [newsIdx, setNewsIdx] = useState("NIFTY50");
+
   const integrations = useQuery({
     queryKey: ["integrations"],
     queryFn: () => list({ data: undefined as never }),
@@ -27,6 +40,33 @@ function Dashboard() {
     enabled: connected,
     refetchInterval: 15000,
   });
+
+  const newsList = useQuery({
+    queryKey: ["news", newsIdx],
+    queryFn: () => newsFn({ data: { market_index: newsIdx as never, limit: 6 } }),
+  });
+  const newsSummary = useQuery({
+    queryKey: ["news-summary-dashboard", newsIdx],
+    queryFn: () => newsSummaryFn({ data: { market_index: newsIdx as never } }),
+  });
+  const econ = useQuery({
+    queryKey: ["economic-events"],
+    queryFn: () => econFn({ data: undefined as never }),
+  });
+
+  const refreshNewsMut = useMutation({
+    mutationFn: () => refreshNewsFn({ data: { market_index: newsIdx as never } }),
+    onSuccess: (r) => {
+      toast.success(r.inserted ? `${r.inserted} new headlines scored` : "Up to date");
+      qc.invalidateQueries({ queryKey: ["news", newsIdx] });
+      qc.invalidateQueries({ queryKey: ["news-summary-dashboard", newsIdx] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+  });
+
+  const upcomingEvents = (econ.data ?? [])
+    .filter((e) => e.event_date && new Date(e.event_date).getTime() >= Date.now() - 24 * 3600 * 1000)
+    .slice(0, 5);
 
   const recent = useQuery({
     queryKey: ["recent-analyses"],
