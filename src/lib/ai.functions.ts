@@ -421,3 +421,14 @@ ${recentCtx || "(none yet)"}`;
 
     return { thread_id: threadId, reply: text };
   });
+
+// Simple test: generate "Hello World" via Gemini
+export const helloWorldGemini = createServerFn({ method: "GET" })
+  .handler(async () => {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) throw new Error("GEMINI_API_KEY not configured.");
+    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const { geminiGenerate } = await import("./gemini.server");
+    const { text } = await geminiGenerate(key, "Say exactly: Hello World", { model, temperature: 0 });
+    return { reply: text.trim() };
+  });
