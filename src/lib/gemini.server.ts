@@ -16,7 +16,7 @@ export async function geminiGenerate(
   prompt: string | GeminiMessage[],
   opts: GeminiOptions = {},
 ): Promise<{ text: string; raw: unknown }> {
-  const model = opts.model ?? "gemini-2.0-flash";
+  const model = opts.model ?? "gemini-1.5-flash";
   const url = `${BASE}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const contents: GeminiMessage[] =
