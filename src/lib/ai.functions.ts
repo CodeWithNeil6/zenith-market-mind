@@ -11,51 +11,168 @@ const AnalyzeInput = z.object({
   notes: z.string().max(500).optional(),
 });
 
+const numLike = z.preprocess((v) => {
+  if (v === null || v === undefined || v === "" || v === "null") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const n = Number(v.replace(/[, ₹]/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}, z.number().nullable());
+
+const numReq = z.preprocess((v) => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v.replace(/[, %₹]/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}, z.number());
+
+const WeightsSchema = z.object({
+  technical: numReq,
+  options: numReq,
+  news: numReq,
+  economic: numReq,
+  candlestick: numReq,
+});
+
 const AnalysisSchema = z.object({
   direction: z.enum(["bullish", "bearish", "neutral"]),
   signal: z.enum(["BUY", "SELL", "CALL", "PUT", "HOLD"]),
-  confidence: z.number().min(0).max(100),
-  entry: z.number().nullable(),
-  stop_loss: z.number().nullable(),
-  target1: z.number().nullable(),
-  target2: z.number().nullable(),
-  target3: z.number().nullable(),
-  risk_reward: z.number().nullable(),
-  weights: z.object({
-    technical: z.number(),
-    options: z.number(),
-    news: z.number(),
-    economic: z.number(),
-    candlestick: z.number(),
-  }),
+  confidence: numReq.pipe(z.number().min(0).max(100)),
+  entry: numLike,
+  stop_loss: numLike,
+  target1: numLike,
+  target2: numLike,
+  target3: numLike,
+  risk_reward: numLike,
+  weights: WeightsSchema,
   weighting_rationale: z.string(),
   reasoning: z.string(),
   market_summary: z.string(),
   risk_analysis: z.string(),
 });
 
-const SYSTEM = `You are AI Algo, an Indian-market intelligence reasoning engine. You analyze NSE/BSE indices and produce structured trading insights. You DO NOT execute trades. You provide educational analysis only.
+const SCHEMA_DESCRIPTION = `{
+  "direction": "bullish" | "bearish" | "neutral",
+  "signal": "BUY" | "SELL" | "CALL" | "PUT" | "HOLD",
+  "confidence": number 0-100,
+  "entry": number | null,
+  "stop_loss": number | null,
+  "target1": number | null,
+  "target2": number | null,
+  "target3": number | null,
+  "risk_reward": number | null,
+  "weights": { "technical": number, "options": number, "news": number, "economic": number, "candlestick": number },
+  "weighting_rationale": string,
+  "reasoning": string,
+  "market_summary": string,
+  "risk_analysis": string
+}`;
 
-Your job:
-1. Dynamically WEIGHT factors (technical, options, news, economic, candlestick) based on the current context the user describes — e.g. RBI-day favors economic; geopolitical shock favors news; clean breakout favors technical. Weights MUST sum to 100.
-2. Produce a direction (bullish/bearish/neutral), a signal (BUY/SELL/CALL/PUT/HOLD), and a 0-100 confidence score.
-3. Provide entry, stop-loss, three targets and risk:reward ratio when actionable. If you do not have live price data, return null for numeric fields and explain in reasoning that live data is required (the user must connect a market-data provider).
-4. Tailor everything to the user's trading style, risk profile, time horizon and capital.
-5. Reasoning must be specific and disciplined — name the levels, patterns, OI clusters, macro events or news themes that drive your view.
+const SYSTEM = `You are AI Algo, an Indian-market intelligence reasoning engine. You analyze NSE/BSE indices and produce structured trading insights. You DO NOT execute trades. Educational analysis only.
 
-Return ONLY valid JSON matching the requested schema.`;
+Rules:
+1. Dynamically WEIGHT five factors (technical, options, news, economic, candlestick) based on context. Weights MUST be numbers and MUST sum to 100.
+2. Produce direction (bullish/bearish/neutral), signal (BUY/SELL/CALL/PUT/HOLD), confidence (0-100).
+3. Provide entry, stop_loss, target1, target2, target3 and risk_reward when actionable. If no live price, return null for those numeric fields.
+4. Tailor everything to the user's style, risk, horizon, capital.
+5. Reasoning must be specific — name levels, OI clusters, macro events, news themes.
+
+Return ONLY a single valid JSON object — no prose, no markdown fences — matching exactly this schema:
+${SCHEMA_DESCRIPTION}`;
+
+function normalizeWeights(w: Record<string, number>): Record<string, number> {
+  const keys = ["technical", "options", "news", "economic", "candlestick"] as const;
+  const filled: Record<string, number> = {};
+  for (const k of keys) filled[k] = Number.isFinite(w[k]) ? Math.max(0, w[k]) : 0;
+  const sum = keys.reduce((s, k) => s + filled[k], 0);
+  if (sum === 0) {
+    const eq = 100 / keys.length;
+    for (const k of keys) filled[k] = eq;
+    return filled;
+  }
+  const scaled: Record<string, number> = {};
+  for (const k of keys) scaled[k] = Math.round((filled[k] / sum) * 1000) / 10;
+  // Fix rounding so total = 100
+  const diff = 100 - keys.reduce((s, k) => s + scaled[k], 0);
+  scaled.technical = Math.round((scaled.technical + diff) * 10) / 10;
+  return scaled;
+}
+
+async function callGeminiForAnalysis(
+  apiKey: string,
+  userPrompt: string,
+): Promise<{ parsed: z.infer<typeof AnalysisSchema>; rawText: string }> {
+  const { geminiGenerate, extractJsonBlock } = await import("./gemini.server");
+  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+
+  const attempt = async (extraSystem = "") => {
+    const { text } = await geminiGenerate(apiKey, userPrompt, {
+      model,
+      system: SYSTEM + (extraSystem ? `\n\n${extraSystem}` : ""),
+      temperature: 0.4,
+      responseMimeType: "application/json",
+    });
+    return text;
+  };
+
+  let rawText = await attempt();
+  console.log("[ai.runAnalysis] raw gemini response (truncated):", rawText.slice(0, 2000));
+
+  const tryParse = (txt: string) => {
+    const candidate = extractJsonBlock(txt) ?? txt;
+    try {
+      const obj = JSON.parse(candidate);
+      if (obj && typeof obj === "object" && obj.weights && typeof obj.weights === "object") {
+        obj.weights = normalizeWeights(obj.weights as Record<string, number>);
+      }
+      return AnalysisSchema.safeParse(obj);
+    } catch {
+      return null;
+    }
+  };
+
+  let parsed = tryParse(rawText);
+  if (!parsed || !parsed.success) {
+    // Repair attempt: ask the model to re-emit valid JSON
+    const repairPrompt = `Your previous response was not valid JSON matching the schema. Re-emit a SINGLE JSON object only, no prose, matching exactly:
+${SCHEMA_DESCRIPTION}
+
+Previous output to repair:
+${rawText.slice(0, 4000)}`;
+    rawText = await (async () => {
+      const { geminiGenerate } = await import("./gemini.server");
+      const { text } = await geminiGenerate(apiKey, repairPrompt, {
+        model,
+        system: SYSTEM,
+        temperature: 0.1,
+        responseMimeType: "application/json",
+      });
+      return text;
+    })();
+    console.log("[ai.runAnalysis] repair gemini response (truncated):", rawText.slice(0, 2000));
+    parsed = tryParse(rawText);
+  }
+
+  if (!parsed || !parsed.success) {
+    throw new Error(
+      `Gemini returned invalid JSON for AnalysisSchema: ${parsed?.error?.message ?? "parse failed"}. Raw: ${rawText.slice(0, 400)}`,
+    );
+  }
+  return { parsed: parsed.data, rawText };
+}
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => AnalyzeInput.parse(input))
   .handler(async ({ data, context }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("LOVABLE_API_KEY not configured");
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) throw new Error("GEMINI_API_KEY not configured. Add it in project secrets.");
     const start = Date.now();
-
-    const { generateText, Output } = await import("ai");
-    const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
-    const gateway = createLovableAiGatewayProvider(key);
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
     // Pull live market context from Upstox if connected
     let liveCtx = "";
@@ -89,7 +206,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
       console.warn("Upstox enrich failed", e);
     }
 
-    // News & economic context (already-scored, last 24h, this index)
     const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const { data: newsRows } = await context.supabase
       .from("news")
@@ -133,30 +249,32 @@ Capital: ₹${data.capital.toLocaleString("en-IN")}
 ${data.notes ? `User notes: ${data.notes}` : ""}
 ${liveCtx || "\n(No live market data — user has not connected Upstox; produce a structural view and return null for entry/SL/targets.)"}${newsCtx}${econCtx}
 
-Decide how to dynamically WEIGHT the five factor buckets (technical, options, news, economic, candlestick) based on what currently matters most for this scenario, then produce the structured analysis.${liveSpot ? ` Use the live spot of ${liveSpot.toFixed(2)} as anchor for entry/SL/targets.` : ""}`;
+Decide how to dynamically WEIGHT the five factor buckets (technical, options, news, economic, candlestick) based on what currently matters most, then produce the structured analysis.${liveSpot ? ` Use the live spot of ${liveSpot.toFixed(2)} as anchor for entry/SL/targets.` : ""}
 
-    let result;
+Return ONLY the JSON object.`;
+
+    let out: z.infer<typeof AnalysisSchema>;
+    let rawText = "";
     try {
-      result = await generateText({
-        model: gateway("google/gemini-3-flash-preview"),
-        system: SYSTEM,
-        prompt: userPrompt,
-        experimental_output: Output.object({ schema: AnalysisSchema }),
-      });
+      const r = await callGeminiForAnalysis(key, userPrompt);
+      out = r.parsed;
+      rawText = r.rawText;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error("[ai.runAnalysis] failed:", msg);
       await context.supabase.from("ai_logs").insert({
         user_id: context.userId,
         kind: "analysis",
-        model: "google/gemini-3-flash-preview",
+        model,
         prompt: { input: data },
         error: msg,
         duration_ms: Date.now() - start,
       });
-      throw new Error(`AI gateway error: ${msg}`);
+      throw new Error(`Gemini error: ${msg}`);
     }
 
-    const out = result.experimental_output as z.infer<typeof AnalysisSchema>;
+    // Ensure weights sum to 100 even after successful parse
+    out.weights = normalizeWeights(out.weights as unknown as Record<string, number>) as typeof out.weights;
 
     const { data: analysis, error: aErr } = await context.supabase
       .from("analyses")
@@ -181,7 +299,7 @@ Decide how to dynamically WEIGHT the five factor buckets (technical, options, ne
         market_summary: out.market_summary,
         risk_analysis: out.risk_analysis,
         inputs: data,
-        model: "google/gemini-3-flash-preview",
+        model,
       })
       .select()
       .single();
@@ -216,9 +334,9 @@ Decide how to dynamically WEIGHT the five factor buckets (technical, options, ne
       context.supabase.from("ai_logs").insert({
         user_id: context.userId,
         kind: "analysis",
-        model: "google/gemini-3-flash-preview",
+        model,
         prompt: { input: data },
-        response: out,
+        response: { parsed: out, raw_text: rawText.slice(0, 8000) },
         duration_ms: Date.now() - start,
       }),
     ]);
@@ -235,8 +353,9 @@ export const sendChat = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => ChatInput.parse(input))
   .handler(async ({ data, context }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("LOVABLE_API_KEY not configured");
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) throw new Error("GEMINI_API_KEY not configured. Add it in project secrets.");
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
     let threadId = data.thread_id;
     if (!threadId) {
@@ -277,36 +396,28 @@ export const sendChat = createServerFn({ method: "POST" })
       )
       .join("\n");
 
-    const { generateText } = await import("ai");
-    const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
-    const gateway = createLovableAiGatewayProvider(key);
-
-    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-      {
-        role: "system",
-        content: `You are AI Algo's market assistant. You help users understand Indian market dynamics, option Greeks, AI-generated signals, weighting rationale, and risk. You give educational analysis only; you never give personal financial advice or place trades.
+    const { geminiGenerate } = await import("./gemini.server");
+    const system = `You are AI Algo's market assistant. You help users understand Indian market dynamics, option Greeks, AI-generated signals, weighting rationale, and risk. Educational analysis only; never personal financial advice or trade execution.
 
 User's recent analyses:
-${recentCtx || "(none yet)"}`,
-      },
+${recentCtx || "(none yet)"}`;
+
+    const contents = [
       ...(history ?? []).map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
+        role: (m.role === "assistant" ? "model" : "user") as "user" | "model",
+        parts: [{ text: m.content }],
       })),
-      { role: "user", content: data.message },
+      { role: "user" as const, parts: [{ text: data.message }] },
     ];
 
-    const result = await generateText({
-      model: gateway("google/gemini-3-flash-preview"),
-      messages,
-    });
+    const { text } = await geminiGenerate(key, contents, { model, system, temperature: 0.6 });
 
     await context.supabase.from("chat_history").insert({
       user_id: context.userId,
       thread_id: threadId,
       role: "assistant",
-      content: result.text,
+      content: text,
     });
 
-    return { thread_id: threadId, reply: result.text };
+    return { thread_id: threadId, reply: text };
   });
