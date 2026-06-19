@@ -107,7 +107,7 @@ async function callGeminiForAnalysis(
   userPrompt: string,
 ): Promise<{ parsed: z.infer<typeof AnalysisSchema>; rawText: string }> {
   const { geminiGenerate, extractJsonBlock } = await import("./gemini.server");
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
   const attempt = async (extraSystem = "") => {
     const { text } = await geminiGenerate(apiKey, userPrompt, {
@@ -172,7 +172,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const key = process.env.GEMINI_API_KEY;
     if (!key) throw new Error("GEMINI_API_KEY not configured. Add it in project secrets.");
     const start = Date.now();
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
     // Pull live market context from Upstox if connected
     let liveCtx = "";
@@ -355,7 +355,7 @@ export const sendChat = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const key = process.env.GEMINI_API_KEY;
     if (!key) throw new Error("GEMINI_API_KEY not configured. Add it in project secrets.");
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
     let threadId = data.thread_id;
     if (!threadId) {
@@ -427,7 +427,7 @@ export const helloWorldGemini = createServerFn({ method: "GET" })
   .handler(async () => {
     const key = process.env.GEMINI_API_KEY;
     if (!key) throw new Error("GEMINI_API_KEY not configured.");
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
     const { geminiGenerate } = await import("./gemini.server");
     const { text } = await geminiGenerate(key, "Say exactly: Hello World", { model, temperature: 0 });
     return { reply: text.trim() };
