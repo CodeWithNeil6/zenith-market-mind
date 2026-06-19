@@ -1,5 +1,6 @@
-// Direct Gemini REST client (server-only). Uses GEMINI_API_KEY.
-const BASE = "https://generativelanguage.googleapis.com/v1beta";
+// Gemini generation through the managed AI gateway (server-only).
+// Gateway API version: OpenAI-compatible /v1. Model IDs use provider prefixes.
+const DEFAULT_GEMINI_MODEL = "google/gemini-3-flash-preview";
 
 export type GeminiPart = { text: string };
 export type GeminiMessage = { role: "user" | "model"; parts: GeminiPart[] };
@@ -12,44 +13,29 @@ export interface GeminiOptions {
 }
 
 export async function geminiGenerate(
-  apiKey: string,
+  lovableApiKey: string,
   prompt: string | GeminiMessage[],
   opts: GeminiOptions = {},
 ): Promise<{ text: string; raw: unknown }> {
-  const model = opts.model ?? "gemini-2.0-flash";
-  const url = `${BASE}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const { generateText } = await import("ai");
+  const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
+  const gateway = createLovableAiGatewayProvider(lovableApiKey);
+  const model = opts.model ?? DEFAULT_GEMINI_MODEL;
 
   const contents: GeminiMessage[] =
     typeof prompt === "string"
       ? [{ role: "user", parts: [{ text: prompt }] }]
       : prompt;
 
-  const body: Record<string, unknown> = {
-    contents,
-    generationConfig: {
-      temperature: opts.temperature ?? 0.4,
-      ...(opts.responseMimeType ? { responseMimeType: opts.responseMimeType } : {}),
-    },
-  };
-  if (opts.system) {
-    body.systemInstruction = { role: "system", parts: [{ text: opts.system }] };
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  const promptText = contents.map((message) => message.parts.map((part) => part.text).join("\n")).join("\n\n");
+  const result = await generateText({
+    model: gateway(model),
+    system: opts.system,
+    prompt: promptText,
+    temperature: opts.temperature ?? 0.4,
   });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Gemini ${res.status}: ${errText.slice(0, 500)}`);
-  }
-  const raw = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const text =
-    raw.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  return { text, raw };
+
+  return { text: result.text, raw: result.response };
 }
 
 // Extract first balanced {...} block from a string (handles ```json fences too).
