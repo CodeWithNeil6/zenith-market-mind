@@ -84,6 +84,16 @@ Rules:
 Return ONLY a single valid JSON object — no prose, no markdown fences — matching exactly this schema:
 ${SCHEMA_DESCRIPTION}`;
 
+const DEFAULT_AI_MODEL = "google/gemini-3-flash-preview";
+
+function configuredAiModel() {
+  const model = process.env.GEMINI_MODEL?.trim();
+  if (!model || model === "gemini-1.5-flash" || model === "gemini-2.0-flash") {
+    return DEFAULT_AI_MODEL;
+  }
+  return model.startsWith("google/") ? model : `google/${model}`;
+}
+
 function normalizeWeights(w: Record<string, number>): Record<string, number> {
   const keys = ["technical", "options", "news", "economic", "candlestick"] as const;
   const filled: Record<string, number> = {};
@@ -103,14 +113,14 @@ function normalizeWeights(w: Record<string, number>): Record<string, number> {
 }
 
 async function callGeminiForAnalysis(
-  apiKey: string,
+  lovableApiKey: string,
   userPrompt: string,
 ): Promise<{ parsed: z.infer<typeof AnalysisSchema>; rawText: string }> {
   const { geminiGenerate, extractJsonBlock } = await import("./gemini.server");
-  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const model = configuredAiModel();
 
   const attempt = async (extraSystem = "") => {
-    const { text } = await geminiGenerate(apiKey, userPrompt, {
+    const { text } = await geminiGenerate(lovableApiKey, userPrompt, {
       model,
       system: SYSTEM + (extraSystem ? `\n\n${extraSystem}` : ""),
       temperature: 0.4,
@@ -145,7 +155,7 @@ Previous output to repair:
 ${rawText.slice(0, 4000)}`;
     rawText = await (async () => {
       const { geminiGenerate } = await import("./gemini.server");
-      const { text } = await geminiGenerate(apiKey, repairPrompt, {
+      const { text } = await geminiGenerate(lovableApiKey, repairPrompt, {
         model,
         system: SYSTEM,
         temperature: 0.1,
@@ -169,10 +179,10 @@ export const runAnalysis = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => AnalyzeInput.parse(input))
   .handler(async ({ data, context }) => {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error("GEMINI_API_KEY not configured. Add it in project secrets.");
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway key not configured.");
     const start = Date.now();
-    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+    const model = configuredAiModel();
 
     // Pull live market context from Upstox if connected
     let liveCtx = "";
@@ -353,9 +363,9 @@ export const sendChat = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => ChatInput.parse(input))
   .handler(async ({ data, context }) => {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error("GEMINI_API_KEY not configured. Add it in project secrets.");
-    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway key not configured.");
+    const model = configuredAiModel();
 
     let threadId = data.thread_id;
     if (!threadId) {
@@ -425,9 +435,9 @@ ${recentCtx || "(none yet)"}`;
 // Simple test: generate "Hello World" via Gemini
 export const helloWorldGemini = createServerFn({ method: "GET" })
   .handler(async () => {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error("GEMINI_API_KEY not configured.");
-    const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway key not configured.");
+    const model = configuredAiModel();
     const { geminiGenerate } = await import("./gemini.server");
     const { text } = await geminiGenerate(key, "Say exactly: Hello World", { model, temperature: 0 });
     return { reply: text.trim() };
