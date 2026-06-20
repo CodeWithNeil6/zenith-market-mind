@@ -5,10 +5,24 @@ import { z } from "zod";
 const IndexEnum = z.enum(["NIFTY50", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"]);
 
 async function getUpstoxToken(
-  supabase: { from: (t: string) => any },
+  supabase: unknown,
   userId: string,
 ): Promise<string | null> {
-  const { data, error } = await supabase
+  const sb = supabase as {
+    from: (t: string) => {
+      select: (s: string) => {
+        eq: (c: string, v: string) => {
+          eq: (c: string, v: string) => {
+            maybeSingle: () => Promise<{
+              data: { credentials: { access_token?: string | null } | null } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const { data, error } = await sb
     .from("integrations")
     .select("credentials")
     .eq("user_id", userId)
