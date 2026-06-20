@@ -16,13 +16,15 @@ async function getUpstoxToken(supabase: {
     };
   };
 }, userId: string): Promise<string | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("integrations")
     .select("credentials")
     .eq("user_id", userId)
     .eq("provider", "upstox")
     .maybeSingle();
+  if (error) console.error("[market] upstox lookup failed", error);
   const tok = data?.credentials?.access_token;
+  console.log("[market] upstox token lookup user=", userId, "found=", !!data, "hasToken=", !!tok);
   return tok ? String(tok) : null;
 }
 
