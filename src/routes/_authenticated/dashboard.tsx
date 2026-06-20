@@ -33,7 +33,7 @@ function Dashboard() {
     queryKey: ["integrations"],
     queryFn: () => list({ data: undefined as never }),
   });
-  const connected = !!integrations.data?.find((i) => i.provider === "upstox" && i.status === "connected");
+  const connected = !!integrations.data?.find((i) => i.provider === "upstox");
   const quotes = useQuery({
     queryKey: ["live-quotes"],
     queryFn: () => quotesFn({ data: { indices: INDICES.map((i) => i.value) as never } }),
