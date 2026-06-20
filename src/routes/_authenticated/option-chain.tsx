@@ -99,11 +99,13 @@ function OptionChainPage() {
         }
       />
 
-      {!upstox ? (
+      {integrations.isLoading ? (
+        <div className="glass rounded-2xl p-8 text-center text-sm text-muted-foreground">Checking Upstox connection…</div>
+      ) : !upstox ? (
         <EmptyState
           icon={Plug}
           title="Connect Upstox to load the option chain"
-          description="Live NSE option chain requires an Upstox access token. AI Algo only reads market data — it never places trades."
+          description="Live NSE option chain requires Upstox credentials. AI Algo only reads market data — it never places trades."
           action={
             <Link to="/integrations" className="px-4 py-2 rounded-md bg-[color:var(--primary)] text-white text-sm">
               Connect Upstox
