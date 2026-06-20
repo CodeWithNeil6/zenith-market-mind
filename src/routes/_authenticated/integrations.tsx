@@ -56,9 +56,9 @@ function IntegrationsPage() {
               Live NSE/BSE quotes, historical candles and option chain. Requires an Upstox account.
             </p>
           </div>
-          {upstox?.status === "connected" && (
+          {upstox && (
             <span className="text-xs bg-bullish-soft text-bullish px-2 py-1 rounded-full inline-flex items-center gap-1">
-              <Check className="size-3" /> Connected
+              <Check className="size-3" /> Saved{(upstox.meta as { has_access_token?: boolean } | null)?.has_access_token === false ? " · token needed" : ""}
             </span>
           )}
         </div>

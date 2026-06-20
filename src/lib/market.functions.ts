@@ -4,25 +4,33 @@ import { z } from "zod";
 
 const IndexEnum = z.enum(["NIFTY50", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"]);
 
-async function getUpstoxToken(supabase: {
-  from: (t: string) => {
-    select: (s: string) => {
-      eq: (
-        c: string,
-        v: string,
-      ) => {
-        eq: (c: string, v: string) => { maybeSingle: () => Promise<{ data: { credentials: { access_token?: string | null } } | null }> };
+async function getUpstoxToken(
+  supabase: unknown,
+  userId: string,
+): Promise<string | null> {
+  const sb = supabase as {
+    from: (t: string) => {
+      select: (s: string) => {
+        eq: (c: string, v: string) => {
+          eq: (c: string, v: string) => {
+            maybeSingle: () => Promise<{
+              data: { credentials: { access_token?: string | null } | null } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
       };
     };
   };
-}, userId: string): Promise<string | null> {
-  const { data } = await supabase
+  const { data, error } = await sb
     .from("integrations")
     .select("credentials")
     .eq("user_id", userId)
     .eq("provider", "upstox")
     .maybeSingle();
+  if (error) console.error("[market] upstox lookup failed", error);
   const tok = data?.credentials?.access_token;
+  console.log("[market] upstox token lookup user=", userId, "found=", !!data, "hasToken=", !!tok);
   return tok ? String(tok) : null;
 }
 

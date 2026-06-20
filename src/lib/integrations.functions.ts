@@ -13,22 +13,33 @@ export const saveUpstoxIntegration = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UpstoxInput.parse(input))
   .handler(async ({ data, context }) => {
+    console.log("[integrations] save upstox user=", context.userId, "hasToken=", !!data.access_token);
     const { data: row, error } = await context.supabase
       .from("integrations")
       .upsert(
         {
           user_id: context.userId,
           provider: "upstox",
-          status: data.access_token ? "connected" : "configured",
+          // Mark as connected whenever credentials are saved; live-data calls
+          // separately validate the access_token and surface a clear error if
+          // it's missing or expired.
+          status: "connected",
           credentials: data,
-          meta: { configured_at: new Date().toISOString() },
+          meta: {
+            configured_at: new Date().toISOString(),
+            has_access_token: !!data.access_token,
+          },
         },
         { onConflict: "user_id,provider" },
       )
       .select()
       .single();
-    if (error) throw new Error(error.message);
-    return { ok: true, id: row.id, status: row.status };
+    if (error) {
+      console.error("[integrations] save failed", error);
+      throw new Error(error.message);
+    }
+    console.log("[integrations] saved id=", row.id, "status=", row.status);
+    return { ok: true, id: row.id, status: row.status, has_access_token: !!data.access_token };
   });
 
 export const listIntegrations = createServerFn({ method: "GET" })
@@ -38,7 +49,11 @@ export const listIntegrations = createServerFn({ method: "GET" })
       .from("integrations")
       .select("id,provider,status,meta,expires_at,updated_at")
       .eq("user_id", context.userId);
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error("[integrations] list failed", error);
+      throw new Error(error.message);
+    }
+    console.log("[integrations] list user=", context.userId, "count=", data?.length ?? 0);
     return data;
   });
 
