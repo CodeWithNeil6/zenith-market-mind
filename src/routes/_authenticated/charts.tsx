@@ -22,7 +22,7 @@ function ChartsPage() {
   const [intv, setIntv] = useState("15");
 
   return (
-    <div className="p-6 md:p-8 max-w-7xl mx-auto">
+    <div className="p-6 md:p-8 max-w-[1600px] mx-auto">
       <PageHeader
         title="Live Charts"
         subtitle="TradingView candlestick charts with EMA, RSI & MACD"
@@ -44,7 +44,9 @@ function ChartsPage() {
           </div>
         }
       />
-      <TradingViewWidget symbol={tvSymbol(idx)} interval={intv} height="calc(100vh - 220px)" />
+      <div className="h-[calc(100vh-180px)] min-h-[680px]">
+        <TradingViewWidget symbol={tvSymbol(idx)} interval={intv} height="100%" />
+      </div>
     </div>
   );
 }

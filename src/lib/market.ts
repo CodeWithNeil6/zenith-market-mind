@@ -2,9 +2,9 @@ export const INDICES = [
   { value: "NIFTY50", label: "NIFTY 50", tv: "NSE:NIFTY" },
   { value: "BANKNIFTY", label: "BANK NIFTY", tv: "NSE:BANKNIFTY" },
   { value: "SENSEX", label: "SENSEX", tv: "BSE:SENSEX" },
-  { value: "FINNIFTY", label: "FINNIFTY", tv: "NSE:CNXFINANCE" },
+  { value: "FINNIFTY", label: "FINNIFTY", tv: "NSE:NIFTY_FIN_SERVICE" },
   { value: "MIDCPNIFTY", label: "MIDCAP NIFTY", tv: "NSE:NIFTY_MID_SELECT" },
-  { value: "NIFTYNXT50", label: "NIFTY NEXT 50", tv: "NSE:NIFTYJR" },
+  { value: "NIFTYNXT50", label: "NIFTY NEXT 50", tv: "NSE:NIFTY_NEXT_50" },
 ] as const;
 export type IndexValue = (typeof INDICES)[number]["value"];
 
