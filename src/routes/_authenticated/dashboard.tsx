@@ -135,7 +135,7 @@ function Dashboard() {
         </div>
       )}
 
-      {integrations.data && integrations.data.every((i) => i.status !== "connected") && (
+      {integrations.data && !integrations.data.some((i) => i.provider === "upstox") && (
         <div className="glass rounded-xl p-4 mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Plug className="size-5 text-[color:var(--accent)]" />
