@@ -29,7 +29,8 @@ function OptionChainPage() {
   const pull = useServerFn(pullOptionChain);
 
   const integrations = useQuery({ queryKey: ["integrations"], queryFn: () => list({ data: undefined as never }) });
-  const upstox = integrations.data?.find((i) => i.provider === "upstox" && i.status === "connected");
+  const upstox = integrations.data?.find((i) => i.provider === "upstox");
+  console.log("[option-chain] integration check", { loading: integrations.isLoading, found: !!upstox, status: upstox?.status });
 
   const [idx, setIdx] = useState("NIFTY50");
   const [expiry, setExpiry] = useState<string | null>(null);
