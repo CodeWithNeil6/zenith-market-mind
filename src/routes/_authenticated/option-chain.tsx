@@ -221,6 +221,21 @@ function OptionChainPage() {
                 </SelectContent>
               </Select>
             ) : null}
+            <span
+              title={`Feed: ${feedStatus}`}
+              className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest px-2 py-1 rounded-full border ${
+                feedStatus === "live"
+                  ? "border-bullish/40 text-bullish bg-bullish-soft"
+                  : feedStatus === "connecting"
+                  ? "border-white/20 text-muted-foreground"
+                  : feedStatus === "error"
+                  ? "border-bearish/40 text-bearish"
+                  : "border-white/15 text-muted-foreground"
+              }`}
+            >
+              <Radio className={`size-3 ${feedStatus === "live" ? "animate-pulse" : ""}`} />
+              {feedStatus === "live" ? "LIVE" : feedStatus === "connecting" ? "…" : feedStatus === "error" ? "OFF" : "—"}
+            </span>
             <Button size="sm" variant="outline" onClick={() => chain.mutate()} disabled={!upstox || !expiry || chain.isPending}>
               <RefreshCw className={`size-4 mr-1 ${chain.isPending ? "animate-spin" : ""}`} />
               Refresh
