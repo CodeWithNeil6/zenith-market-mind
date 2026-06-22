@@ -11,6 +11,7 @@ export const UPSTOX_INSTRUMENTS: Record<string, string> = {
 };
 
 const BASE = "https://api.upstox.com/v2";
+const BASE_V3 = "https://api.upstox.com/v3";
 
 export class UpstoxError extends Error {
   status: number;
@@ -20,8 +21,8 @@ export class UpstoxError extends Error {
   }
 }
 
-async function call(path: string, token: string) {
-  const res = await fetch(`${BASE}${path}`, {
+async function call(path: string, token: string, base: string = BASE) {
+  const res = await fetch(`${base}${path}`, {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
@@ -89,6 +90,62 @@ export async function fetchExpiries(token: string, marketIndex: string): Promise
   const set = new Set<string>();
   for (const c of arr) if (c.expiry) set.add(c.expiry);
   return Array.from(set).sort();
+}
+
+export type OptionContract = {
+  strike: number;
+  call_key: string;
+  put_key: string;
+};
+
+/**
+ * Returns one row per strike for the requested expiry with the Upstox
+ * instrument_key for both CE and PE legs — needed to subscribe over the
+ * Market Data Feed v3 WebSocket.
+ */
+export async function fetchOptionContracts(
+  token: string,
+  marketIndex: string,
+  expiry: string,
+): Promise<{ underlying_key: string; contracts: OptionContract[] }> {
+  const key = UPSTOX_INSTRUMENTS[marketIndex];
+  if (!key) throw new Error(`Unknown index ${marketIndex}`);
+  const q = new URLSearchParams({ instrument_key: key });
+  const body = await call(`/option/contract?${q.toString()}`, token);
+  const arr = (body.data as Array<{
+    expiry: string;
+    strike_price: number;
+    instrument_type: string; // "CE" | "PE"
+    instrument_key: string;
+  }>) ?? [];
+  const byStrike = new Map<number, { call_key?: string; put_key?: string }>();
+  for (const c of arr) {
+    if (c.expiry !== expiry) continue;
+    const strike = Number(c.strike_price);
+    const slot = byStrike.get(strike) ?? {};
+    if (c.instrument_type === "CE") slot.call_key = c.instrument_key;
+    else if (c.instrument_type === "PE") slot.put_key = c.instrument_key;
+    byStrike.set(strike, slot);
+  }
+  const contracts: OptionContract[] = [];
+  for (const [strike, v] of byStrike.entries()) {
+    if (v.call_key && v.put_key) contracts.push({ strike, call_key: v.call_key, put_key: v.put_key });
+  }
+  contracts.sort((a, b) => a.strike - b.strike);
+  return { underlying_key: key, contracts };
+}
+
+/**
+ * Upstox V3 Market Data Feed authorize. Returns a short-lived signed WSS URL
+ * the browser can connect to directly — no server WebSocket relay needed.
+ * Docs: https://upstox.com/developer/api-documentation/market-quote/market-data-feed-v3
+ */
+export async function getMarketFeedAuthorization(token: string): Promise<string> {
+  const body = await call(`/feed/market-data-feed/authorize`, token, BASE_V3);
+  const data = body.data as { authorized_redirect_uri?: string } | null;
+  const url = data?.authorized_redirect_uri;
+  if (!url) throw new Error("Upstox feed authorize: missing authorized_redirect_uri");
+  return url;
 }
 
 export type OptionLeg = {

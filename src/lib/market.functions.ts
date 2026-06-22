@@ -85,3 +85,29 @@ export const pullOptionChain = createServerFn({ method: "POST" })
 
     return chain;
   });
+
+/**
+ * Returns the WSS URL (signed, short-lived) and the per-strike instrument_keys
+ * needed to subscribe to the Upstox V3 Market Data Feed for one expiry.
+ * The browser connects to the WSS URL directly — there is no server relay,
+ * so ticks arrive with zero added latency.
+ */
+export const getOptionFeedSession = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ market_index: IndexEnum, expiry: z.string().min(8) }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const token = await getUpstoxToken(context.supabase as never, context.userId);
+    if (!token) throw new Error("Upstox not connected. Save an Upstox access token in Integrations.");
+    const { fetchOptionContracts, getMarketFeedAuthorization } = await import("./upstox.server");
+    const [contracts, ws_url] = await Promise.all([
+      fetchOptionContracts(token, data.market_index, data.expiry),
+      getMarketFeedAuthorization(token),
+    ]);
+    return {
+      ws_url,
+      underlying_key: contracts.underlying_key,
+      contracts: contracts.contracts,
+    };
+  });
