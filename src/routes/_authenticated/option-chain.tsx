@@ -30,7 +30,8 @@ function OptionChainPage() {
 
   const integrations = useQuery({ queryKey: ["integrations"], queryFn: () => list({ data: undefined as never }) });
   const upstox = integrations.data?.find((i) => i.provider === "upstox");
-  console.log("[option-chain] integration check", { loading: integrations.isLoading, found: !!upstox, status: upstox?.status });
+  const hasToken = (upstox?.meta as { has_access_token?: boolean } | null)?.has_access_token !== false;
+  console.log("[option-chain] integration check", { loading: integrations.isLoading, found: !!upstox, status: upstox?.status, hasToken });
 
   const [idx, setIdx] = useState("NIFTY50");
   const [expiry, setExpiry] = useState<string | null>(null);
@@ -38,8 +39,9 @@ function OptionChainPage() {
   const expiries = useQuery({
     queryKey: ["expiries", idx],
     queryFn: () => expiriesFn({ data: { market_index: idx as never } }),
-    enabled: !!upstox,
+    enabled: !!upstox && hasToken,
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 
   useEffect(() => {
@@ -47,15 +49,19 @@ function OptionChainPage() {
     if (list && list.length && (!expiry || !list.includes(expiry))) setExpiry(list[0]);
   }, [expiries.data, expiry]);
 
+  useEffect(() => {
+    if (expiries.error) toast.error(expiries.error instanceof Error ? expiries.error.message : "Failed to load expiries");
+  }, [expiries.error]);
+
   const chain = useMutation({
     mutationFn: () => pull({ data: { market_index: idx as never, expiry: expiry! } }) as Promise<Chain>,
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to load chain"),
   });
 
   useEffect(() => {
-    if (upstox && expiry) chain.mutate();
+    if (upstox && hasToken && expiry) chain.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, expiry, upstox?.id]);
+  }, [idx, expiry, upstox?.id, hasToken]);
 
   const data = chain.data;
   const atmStrike = useMemo(() => {
@@ -109,6 +115,17 @@ function OptionChainPage() {
           action={
             <Link to="/integrations" className="px-4 py-2 rounded-md bg-[color:var(--primary)] text-white text-sm">
               Connect Upstox
+            </Link>
+          }
+        />
+      ) : !hasToken ? (
+        <EmptyState
+          icon={Plug}
+          title="Upstox access token required"
+          description="Your Upstox API key and secret are saved, but a daily access token is needed to fetch live option chain data. Generate a token from your Upstox developer console and paste it on the Integrations page."
+          action={
+            <Link to="/integrations" className="px-4 py-2 rounded-md bg-[color:var(--primary)] text-white text-sm">
+              Add access token
             </Link>
           }
         />
