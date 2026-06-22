@@ -11,6 +11,7 @@ export const UPSTOX_INSTRUMENTS: Record<string, string> = {
 };
 
 const BASE = "https://api.upstox.com/v2";
+const BASE_V3 = "https://api.upstox.com/v3";
 
 export class UpstoxError extends Error {
   status: number;
