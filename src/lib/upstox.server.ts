@@ -141,7 +141,7 @@ export async function fetchOptionContracts(
  * Docs: https://upstox.com/developer/api-documentation/market-quote/market-data-feed-v3
  */
 export async function getMarketFeedAuthorization(token: string): Promise<string> {
-  const body = await call(`/feed/market-data-feed/authorize`, token);
+  const body = await call(`/feed/market-data-feed/authorize`, token, BASE_V3);
   const data = body.data as { authorized_redirect_uri?: string } | null;
   const url = data?.authorized_redirect_uri;
   if (!url) throw new Error("Upstox feed authorize: missing authorized_redirect_uri");
