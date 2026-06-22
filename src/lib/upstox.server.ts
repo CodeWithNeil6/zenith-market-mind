@@ -21,8 +21,8 @@ export class UpstoxError extends Error {
   }
 }
 
-async function call(path: string, token: string) {
-  const res = await fetch(`${BASE}${path}`, {
+async function call(path: string, token: string, base: string = BASE) {
+  const res = await fetch(`${base}${path}`, {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
