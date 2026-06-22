@@ -59,17 +59,135 @@ function OptionChainPage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to load chain"),
   });
 
+  // Slow REST re-seed (30s) so OI/baseline drifts catch up even without ticks.
   useEffect(() => {
     if (!(upstox && hasToken && expiry)) return;
     chain.mutate();
     const id = setInterval(() => {
       if (document.visibilityState === "visible" && !chain.isPending) chain.mutate();
-    }, 2_000);
+    }, 30_000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idx, expiry, upstox?.id, hasToken]);
 
-  const data = chain.data;
+  // === Live Upstox V3 Market Data Feed (WebSocket, tick-by-tick) ===
+  const feedSession = useServerFn(getOptionFeedSession);
+  const [ticks, setTicks] = useState<Map<string, Tick>>(() => new Map());
+  const [feedStatus, setFeedStatus] = useState<"idle" | "connecting" | "live" | "closed" | "error">("idle");
+  const reconnectRef = useRef(0);
+
+  useEffect(() => {
+    if (!(upstox && hasToken && expiry)) return;
+    let cancelled = false;
+    let handle: { close: () => void } | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const start = async () => {
+      try {
+        setFeedStatus("connecting");
+        const session = await feedSession({ data: { market_index: idx as never, expiry } });
+        if (cancelled) return;
+        const instrumentKeys = session.contracts.flatMap((c) => [c.call_key, c.put_key]);
+        handle = connectUpstoxOptionFeed({
+          wsUrl: session.ws_url,
+          underlyingKey: session.underlying_key,
+          instrumentKeys,
+          onEvent: (ev) => {
+            if (ev.kind === "status") {
+              if (ev.status === "open") { setFeedStatus("live"); reconnectRef.current = 0; }
+              else if (ev.status === "closed") {
+                setFeedStatus("closed");
+                if (!cancelled) {
+                  const delay = Math.min(1000 * 2 ** reconnectRef.current++, 15_000);
+                  retryTimer = setTimeout(start, delay);
+                }
+              } else if (ev.status === "error") setFeedStatus("error");
+              return;
+            }
+            // tick
+            setTicks((prev) => {
+              const next = new Map(prev);
+              next.set(ev.instrument_key, ev.tick);
+              return next;
+            });
+          },
+        });
+      } catch (e) {
+        console.error("[option-chain] feed start failed", e);
+        setFeedStatus("error");
+        if (!cancelled) {
+          const delay = Math.min(1000 * 2 ** reconnectRef.current++, 15_000);
+          retryTimer = setTimeout(start, delay);
+        }
+      }
+    };
+
+    setTicks(new Map());
+    start();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      handle?.close();
+      setFeedStatus("idle");
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, expiry, upstox?.id, hasToken]);
+
+  // Merge live ticks into the REST-seeded chain. Recomputed on every tick.
+  const data = useMemo<Chain | undefined>(() => {
+    const seed = chain.data;
+    if (!seed) return undefined;
+    if (ticks.size === 0) return seed;
+    // Build instrument_key → (strike, side) map from the seed.
+    // The REST chain doesn't carry instrument_keys, so we attach them via the
+    // feed session in a separate ref-keyed map.
+    const liveRows = seed.rows.map((r) => {
+      const callKey = contractKeysRef.current.get(`${r.strike}|CE`);
+      const putKey = contractKeysRef.current.get(`${r.strike}|PE`);
+      const cTick = callKey ? ticks.get(callKey) : undefined;
+      const pTick = putKey ? ticks.get(putKey) : undefined;
+      return {
+        strike: r.strike,
+        call: cTick ? { ...r.call, ltp: cTick.ltp || r.call.ltp, oi: cTick.oi || r.call.oi, iv: cTick.iv || r.call.iv, volume: cTick.volume || r.call.volume, delta: cTick.delta || r.call.delta, gamma: cTick.gamma || r.call.gamma, theta: cTick.theta || r.call.theta, vega: cTick.vega || r.call.vega } : r.call,
+        put: pTick ? { ...r.put, ltp: pTick.ltp || r.put.ltp, oi: pTick.oi || r.put.oi, iv: pTick.iv || r.put.iv, volume: pTick.volume || r.put.volume, delta: pTick.delta || r.put.delta, gamma: pTick.gamma || r.put.gamma, theta: pTick.theta || r.put.theta, vega: pTick.vega || r.put.vega } : r.put,
+      };
+    });
+    const underlying = underlyingKeyRef.current ? ticks.get(underlyingKeyRef.current) : undefined;
+    const total_call_oi = liveRows.reduce((s, r) => s + r.call.oi, 0);
+    const total_put_oi = liveRows.reduce((s, r) => s + r.put.oi, 0);
+    return {
+      ...seed,
+      rows: liveRows,
+      spot: underlying?.ltp || seed.spot,
+      total_call_oi,
+      total_put_oi,
+      pcr: total_call_oi ? total_put_oi / total_call_oi : seed.pcr,
+    };
+  }, [chain.data, ticks]);
+
+  // Track contract instrument_keys per strike for the merge above.
+  const contractKeysRef = useRef<Map<string, string>>(new Map());
+  const underlyingKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!(upstox && hasToken && expiry)) return;
+    let cancelled = false;
+    feedSession({ data: { market_index: idx as never, expiry } })
+      .then((s) => {
+        if (cancelled) return;
+        const m = new Map<string, string>();
+        for (const c of s.contracts) {
+          m.set(`${c.strike}|CE`, c.call_key);
+          m.set(`${c.strike}|PE`, c.put_key);
+        }
+        contractKeysRef.current = m;
+        underlyingKeyRef.current = s.underlying_key;
+      })
+      .catch(() => { /* feed effect already surfaces this */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, expiry, upstox?.id, hasToken]);
+
   const atmStrike = useMemo(() => {
     if (!data?.rows.length) return null;
     return data.rows.reduce((p, c) =>
