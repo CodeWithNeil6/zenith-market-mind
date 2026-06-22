@@ -118,6 +118,17 @@ function OptionChainPage() {
             </Link>
           }
         />
+      ) : !hasToken ? (
+        <EmptyState
+          icon={Plug}
+          title="Upstox access token required"
+          description="Your Upstox API key and secret are saved, but a daily access token is needed to fetch live option chain data. Generate a token from your Upstox developer console and paste it on the Integrations page."
+          action={
+            <Link to="/integrations" className="px-4 py-2 rounded-md bg-[color:var(--primary)] text-white text-sm">
+              Add access token
+            </Link>
+          }
+        />
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
