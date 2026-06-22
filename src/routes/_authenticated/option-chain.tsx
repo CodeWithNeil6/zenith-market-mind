@@ -59,7 +59,12 @@ function OptionChainPage() {
   });
 
   useEffect(() => {
-    if (upstox && hasToken && expiry) chain.mutate();
+    if (!(upstox && hasToken && expiry)) return;
+    chain.mutate();
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && !chain.isPending) chain.mutate();
+    }, 10_000);
+    return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idx, expiry, upstox?.id, hasToken]);
 
