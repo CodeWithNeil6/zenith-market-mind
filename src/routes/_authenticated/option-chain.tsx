@@ -63,7 +63,7 @@ function OptionChainPage() {
     chain.mutate();
     const id = setInterval(() => {
       if (document.visibilityState === "visible" && !chain.isPending) chain.mutate();
-    }, 10_000);
+    }, 2_000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idx, expiry, upstox?.id, hasToken]);
