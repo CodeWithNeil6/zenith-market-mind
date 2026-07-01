@@ -4,7 +4,10 @@
 // - Decodes binary protobuf frames with the inlined MarketDataFeedV3 schema.
 // No server relay → tick latency ≈ Upstox's own push latency.
 
-import protobuf from "protobufjs/light";
+// Use full protobufjs build — `protobufjs/light` does not include the .proto
+// text parser (protobuf.parse is undefined there), which surfaced as
+// "r(...).default.parse is not a function" in production.
+import protobuf from "protobufjs";
 
 // MarketDataFeedV3.proto — trimmed to the messages we actually decode.
 // Source: Upstox developer docs, "Market Data Feed (v3)".
