@@ -4,79 +4,29 @@
 // - Decodes binary protobuf frames with the inlined MarketDataFeedV3 schema.
 // No server relay → tick latency ≈ Upstox's own push latency.
 
-// Use full protobufjs build — `protobufjs/light` does not include the .proto
-// text parser (protobuf.parse is undefined there), which surfaced as
-// "r(...).default.parse is not a function" in production.
-import protobuf from "protobufjs";
+// Use the light reflection build with a JSON descriptor instead of parsing a
+// `.proto` string at runtime. Some browser bundles tree-shake/alias away the
+// text parser, which caused `default.parse is not a function` on this route.
+import protobuf from "protobufjs/light";
 
-// MarketDataFeedV3.proto — trimmed to the messages we actually decode.
-// Source: Upstox developer docs, "Market Data Feed (v3)".
-const PROTO = `
-syntax = "proto3";
-package com.upstox.marketdatafeederv3udapi.rpc.proto;
-
-message LTPC { double ltp = 1; int64 ltt = 2; int64 ltq = 3; double cp = 4; }
-message Quote { int32 bidQ = 1; double bidP = 2; int32 askQ = 3; double askP = 4; }
-message OptionGreeks { double delta = 1; double theta = 2; double gamma = 3; double vega = 4; double rho = 5; }
-message OHLC { string interval = 1; double open = 2; double high = 3; double low = 4; double close = 5; int64 vol = 6; int64 ts = 7; }
-message MarketOHLC { repeated OHLC ohlc = 1; }
-message MarketLevel { repeated Quote bidAskQuote = 1; }
-message MarketFullFeed {
-  LTPC ltpc = 1;
-  MarketLevel marketLevel = 2;
-  OptionGreeks optionGreeks = 3;
-  MarketOHLC marketOHLC = 4;
-  double atp = 5;
-  int64 vtt = 6;
-  double oi = 7;
-  double iv = 8;
-  double tbq = 9;
-  double tsq = 10;
-}
-message IndexFullFeed { LTPC ltpc = 1; MarketOHLC marketOHLC = 2; }
-message FullFeed {
-  oneof FullFeedUnion {
-    MarketFullFeed marketFF = 1;
-    IndexFullFeed indexFF = 2;
-  }
-}
-message FirstLevelWithGreeks {
-  LTPC ltpc = 1;
-  Quote firstDepth = 2;
-  OptionGreeks optionGreeks = 3;
-  int64 vtt = 4;
-  double oi = 5;
-  double iv = 6;
-}
-message Feed {
-  oneof FeedUnion {
-    LTPC ltpc = 1;
-    FullFeed fullFeed = 2;
-    FirstLevelWithGreeks firstLevelWithGreeks = 3;
-  }
-  enum RequestMode {
-    initial_state = 0;
-    ltpc = 1;
-    full_d5 = 2;
-    option_chain = 3;
-    full_d30 = 4;
-  }
-  RequestMode requestMode = 4;
-}
-message MarketInfo { string segmentStatus = 1; map<string, string> segmentStatusMap = 2; }
-message FeedResponse {
-  enum Type { initial_feed = 0; live_feed = 1; market_info = 2; }
-  Type type = 1;
-  map<string, Feed> feeds = 2;
-  string currentTs = 3;
-  MarketInfo marketInfo = 4;
-}
-`;
-
-const root = protobuf.parse(PROTO, { keepCase: false }).root;
-const FeedResponse = root.lookupType(
-  "com.upstox.marketdatafeederv3udapi.rpc.proto.FeedResponse",
-);
+const root = protobuf.Root.fromJSON({
+  nested: {
+    LTPC: { fields: { ltp: { type: "double", id: 1 }, ltt: { type: "int64", id: 2 }, ltq: { type: "int64", id: 3 }, cp: { type: "double", id: 4 } } },
+    Quote: { fields: { bidQ: { type: "int32", id: 1 }, bidP: { type: "double", id: 2 }, askQ: { type: "int32", id: 3 }, askP: { type: "double", id: 4 } } },
+    OptionGreeks: { fields: { delta: { type: "double", id: 1 }, theta: { type: "double", id: 2 }, gamma: { type: "double", id: 3 }, vega: { type: "double", id: 4 }, rho: { type: "double", id: 5 } } },
+    OHLC: { fields: { interval: { type: "string", id: 1 }, open: { type: "double", id: 2 }, high: { type: "double", id: 3 }, low: { type: "double", id: 4 }, close: { type: "double", id: 5 }, vol: { type: "int64", id: 6 }, ts: { type: "int64", id: 7 } } },
+    MarketOHLC: { fields: { ohlc: { rule: "repeated", type: "OHLC", id: 1 } } },
+    MarketLevel: { fields: { bidAskQuote: { rule: "repeated", type: "Quote", id: 1 } } },
+    MarketFullFeed: { fields: { ltpc: { type: "LTPC", id: 1 }, marketLevel: { type: "MarketLevel", id: 2 }, optionGreeks: { type: "OptionGreeks", id: 3 }, marketOHLC: { type: "MarketOHLC", id: 4 }, atp: { type: "double", id: 5 }, vtt: { type: "int64", id: 6 }, oi: { type: "double", id: 7 }, iv: { type: "double", id: 8 }, tbq: { type: "double", id: 9 }, tsq: { type: "double", id: 10 } } },
+    IndexFullFeed: { fields: { ltpc: { type: "LTPC", id: 1 }, marketOHLC: { type: "MarketOHLC", id: 2 } } },
+    FullFeed: { fields: { marketFF: { type: "MarketFullFeed", id: 1 }, indexFF: { type: "IndexFullFeed", id: 2 } } },
+    FirstLevelWithGreeks: { fields: { ltpc: { type: "LTPC", id: 1 }, firstDepth: { type: "Quote", id: 2 }, optionGreeks: { type: "OptionGreeks", id: 3 }, vtt: { type: "int64", id: 4 }, oi: { type: "double", id: 5 }, iv: { type: "double", id: 6 } } },
+    Feed: { fields: { ltpc: { type: "LTPC", id: 1 }, fullFeed: { type: "FullFeed", id: 2 }, firstLevelWithGreeks: { type: "FirstLevelWithGreeks", id: 3 }, requestMode: { type: "RequestMode", id: 4 } }, nested: { RequestMode: { values: { initial_state: 0, ltpc: 1, full_d5: 2, option_chain: 3, full_d30: 4 } } } },
+    MarketInfo: { fields: { segmentStatus: { type: "string", id: 1 }, segmentStatusMap: { keyType: "string", type: "string", id: 2 } } },
+    FeedResponse: { fields: { type: { type: "Type", id: 1 }, feeds: { keyType: "string", type: "Feed", id: 2 }, currentTs: { type: "string", id: 3 }, marketInfo: { type: "MarketInfo", id: 4 } }, nested: { Type: { values: { initial_feed: 0, live_feed: 1, market_info: 2 } } } },
+  },
+} as protobuf.INamespace);
+const FeedResponse = root.lookupType("FeedResponse");
 
 export type Tick = {
   ltp: number;
