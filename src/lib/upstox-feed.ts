@@ -25,7 +25,7 @@ const root = protobuf.Root.fromJSON({
     MarketInfo: { fields: { segmentStatus: { type: "string", id: 1 }, segmentStatusMap: { keyType: "string", type: "string", id: 2 } } },
     FeedResponse: { fields: { type: { type: "Type", id: 1 }, feeds: { keyType: "string", type: "Feed", id: 2 }, currentTs: { type: "string", id: 3 }, marketInfo: { type: "MarketInfo", id: 4 } }, nested: { Type: { values: { initial_feed: 0, live_feed: 1, market_info: 2 } } } },
   },
-});
+} as protobuf.INamespace);
 const FeedResponse = root.lookupType("FeedResponse");
 
 export type Tick = {
