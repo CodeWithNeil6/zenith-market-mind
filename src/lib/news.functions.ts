@@ -47,21 +47,28 @@ export const refreshNews = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ market_index: IndexEnum }).parse(input))
   .handler(async ({ data, context }) => {
     const { fetchIndexNews } = await import("./news.server");
-    const items = await fetchIndexNews(data.market_index, 15);
-    if (!items.length) return { inserted: 0 };
+    const items = await fetchIndexNews(data.market_index, 20);
+    console.log("[news] fetched", items.length, "for", data.market_index);
+    if (!items.length) return { inserted: 0, fetched: 0 };
 
-    // Dedupe against last 48h
-    const since = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    // Dedupe against ALL of this user's stored news (URLs are stable)
     const { data: existing } = await context.supabase
       .from("news")
       .select("url")
       .eq("user_id", context.userId)
-      .gte("created_at", since);
+      .order("created_at", { ascending: false })
+      .limit(500);
     const seen = new Set((existing ?? []).map((r) => r.url));
     const fresh = items.filter((i) => !seen.has(i.url));
-    if (!fresh.length) return { inserted: 0 };
+    console.log("[news] fresh after dedupe:", fresh.length);
+    if (!fresh.length) return { inserted: 0, fetched: items.length };
 
-    const scores = await scoreSentiment(fresh, data.market_index).catch(() => null);
+    let scores: z.infer<typeof SentimentArraySchema>["items"] | null = null;
+    try {
+      scores = await scoreSentiment(fresh, data.market_index);
+    } catch (e) {
+      console.error("[news] sentiment scoring failed:", e instanceof Error ? e.message : e);
+    }
 
     const { data: inserted, error } = await context.supabase
       .from("news")
@@ -77,21 +84,26 @@ export const refreshNews = createServerFn({ method: "POST" })
         })),
       )
       .select("id");
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error("[news] insert error:", error.message);
+      throw new Error(error.message);
+    }
 
     if (scores && inserted) {
+      const s = scores;
       const sentRows = inserted.map((row, i) => ({
         user_id: context.userId,
         news_id: row.id,
-        sentiment_score: scores[i]?.sentiment_score ?? 0,
-        bullish_score: scores[i]?.bullish_score ?? 0,
-        bearish_score: scores[i]?.bearish_score ?? 0,
-        impact_score: scores[i]?.impact_score ?? 0,
-        rationale: scores[i]?.rationale ?? "",
+        sentiment_score: s[i]?.sentiment_score ?? 0,
+        bullish_score: s[i]?.bullish_score ?? 0,
+        bearish_score: s[i]?.bearish_score ?? 0,
+        impact_score: s[i]?.impact_score ?? 0,
+        rationale: s[i]?.rationale ?? "",
       }));
-      await context.supabase.from("sentiment").insert(sentRows);
+      const { error: sentErr } = await context.supabase.from("sentiment").insert(sentRows);
+      if (sentErr) console.error("[news] sentiment insert error:", sentErr.message);
     }
-    return { inserted: fresh.length };
+    return { inserted: fresh.length, fetched: items.length };
   });
 
 export const listNews = createServerFn({ method: "POST" })
