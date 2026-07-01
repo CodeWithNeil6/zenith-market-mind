@@ -195,38 +195,78 @@ export const refreshEconomicEvents = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { fetchEconomicNews } = await import("./news.server");
     const items = await fetchEconomicNews(40);
-    if (!items.length) return { inserted: 0 };
-
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("LOVABLE_API_KEY not configured");
-    const { generateText, Output } = await import("ai");
-    const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
-    const gateway = createLovableAiGatewayProvider(key);
+    console.log("[econ] fetched", items.length, "headlines");
+    if (!items.length) return { inserted: 0, fetched: 0 };
 
     const today = new Date().toISOString().slice(0, 10);
-    const numbered = items
-      .map((h, i) => `${i + 1}. [${h.published_at.slice(0, 10)}] ${h.title} — ${h.summary.slice(0, 160)}`)
-      .join("\n");
+    type ExtractedEvent = z.infer<typeof EventSchema>["events"][number];
+    let events: ExtractedEvent[] = [];
 
-    const result = await generateText({
-      model: gateway("google/gemini-3-flash-preview"),
-      system: `You extract structured Indian & global economic events from news headlines. Focus on RBI policy, CPI, GDP, IIP, trade, FOMC, central bank actions. Today is ${today}. Estimate event_date when not explicit. Skip pure opinion pieces. Return UNIQUE events (dedupe across overlapping headlines). Importance: high = market-moving central bank/inflation/GDP, medium = secondary indicators, low = commentary.`,
-      prompt: `Extract distinct economic events from these headlines:\n${numbered}`,
-      experimental_output: Output.object({ schema: EventSchema }),
-    });
-    const out = result.experimental_output as z.infer<typeof EventSchema>;
+    const key = process.env.LOVABLE_API_KEY;
+    if (key) {
+      try {
+        const { generateText, Output } = await import("ai");
+        const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
+        const gateway = createLovableAiGatewayProvider(key);
+        const numbered = items
+          .map((h, i) => `${i + 1}. [${h.published_at.slice(0, 10)}] ${h.title} — ${h.summary.slice(0, 160)}`)
+          .join("\n");
+        const result = await generateText({
+          model: gateway("google/gemini-3-flash-preview"),
+          system: `You extract structured Indian & global economic events from news headlines. Focus on RBI policy, CPI, GDP, IIP, trade, FOMC, central bank actions. Today is ${today}. Estimate event_date when not explicit (YYYY-MM-DD). Skip pure opinion. Dedupe across overlapping headlines. Importance: high = market-moving central bank/inflation/GDP, medium = secondary indicators, low = commentary.`,
+          prompt: `Extract distinct economic events from these headlines:\n${numbered}`,
+          experimental_output: Output.object({ schema: EventSchema }),
+        });
+        const out = result.experimental_output as z.infer<typeof EventSchema>;
+        events = out.events;
+        console.log("[econ] AI extracted", events.length, "events");
+      } catch (e) {
+        console.error("[econ] AI extraction failed, falling back to raw:", e instanceof Error ? e.message : e);
+      }
+    }
 
-    // Replace this user's recent extracted events (keep table fresh)
+    // Fallback: keyword-classify headlines into events so page never stays empty
+    if (!events.length) {
+      const seen = new Set<string>();
+      for (const h of items) {
+        const t = h.title.toLowerCase();
+        let category: ExtractedEvent["category"] = "other";
+        let importance: ExtractedEvent["importance"] = "medium";
+        if (/(rbi|repo rate|monetary policy|central bank)/i.test(h.title)) { category = "monetary_policy"; importance = "high"; }
+        else if (/(cpi|inflation|wpi)/i.test(h.title)) { category = "inflation"; importance = "high"; }
+        else if (/(gdp|growth)/i.test(h.title)) { category = "growth"; importance = "high"; }
+        else if (/(iip|industrial production|pmi)/i.test(h.title)) { category = "growth"; importance = "medium"; }
+        else if (/(trade deficit|exports|imports)/i.test(h.title)) { category = "trade"; importance = "medium"; }
+        else if (/(fomc|fed|federal reserve|ecb|boj)/i.test(h.title)) { category = "global"; importance = "high"; }
+        const key = h.title.slice(0, 80).toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        events.push({
+          event_name: h.title.slice(0, 140),
+          event_date: h.published_at.slice(0, 10),
+          category,
+          importance,
+          forecast: null,
+          previous: null,
+          actual: null,
+          summary: h.summary.slice(0, 280),
+        });
+      }
+      events = events.slice(0, 30);
+      console.log("[econ] fallback produced", events.length, "events");
+    }
+
+    if (!events.length) return { inserted: 0, fetched: items.length };
+
+    // Only wipe recent extracted rows once we have replacements ready
     await context.supabase
       .from("economic_events")
       .delete()
       .eq("user_id", context.userId)
       .gte("created_at", new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString());
 
-    if (!out.events.length) return { inserted: 0 };
-
     const { error } = await context.supabase.from("economic_events").insert(
-      out.events.map((e) => ({
+      events.map((e) => ({
         user_id: context.userId,
         event_name: e.event_name,
         event_date: e.event_date,
@@ -238,8 +278,11 @@ export const refreshEconomicEvents = createServerFn({ method: "POST" })
         meta: { summary: e.summary } as never,
       })),
     );
-    if (error) throw new Error(error.message);
-    return { inserted: out.events.length };
+    if (error) {
+      console.error("[econ] insert error:", error.message);
+      throw new Error(error.message);
+    }
+    return { inserted: events.length, fetched: items.length };
   });
 
 export const listEconomicEvents = createServerFn({ method: "GET" })
